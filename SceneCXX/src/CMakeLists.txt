@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.1)
+project(mytest)
+find_package(SofaSimulation)
+find_package(SofaPython)
+add_executable(${PROJECT_NAME} Main.cpp)
+target_link_libraries(${PROJECT_NAME} SofaPython SofaSimulation)
