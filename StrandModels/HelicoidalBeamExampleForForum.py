@@ -18,6 +18,51 @@ Author of scn2python.py: Christoph PAULUS, christoph.paulus@inria.fr
 
 import sys
 import Sofa
+import numpy as np
+from pyquaternion import Quaternion
+
+def getCoordPointsAlongHellix(r, h, npt, tmax):
+    # position vectors along the curve
+    x = np.zeros((npt,3), dtype = float)
+    # tangent vectors
+    xp = np.zeros((npt,3), dtype = float)
+    t = np.linspace(0,tmax, npt)
+    x[:,0] = r * np.cos(t)
+    x[:,1] = r * np.sin(t)
+    x[:,2] = h * t
+
+    xp[:,0] = -r * np.sin(t)
+    xp[:,1] = r * np.cos(t)
+    xp[:,2] = h 
+
+    # quaternions
+    q = np.zeros((npt,4), dtype = float)
+    a = np.array([1,0,0])
+    # trick: find the rotation matrix rotating global basis vector a into tangent vector b
+    # extract the associated quaternion
+    for i in range(npt):
+        #tangent to the curve at the node
+        b = xp[i]/np.linalg.norm(xp[i])
+        assert np.allclose(np.linalg.norm(b), 1.)
+        v = np.cross(a,b)
+        s = np.linalg.norm(v) 
+        if not np.allclose(s, 0):
+            c = np.dot(a,b)
+            vskew = np.array([[0, -v[2], v[1]], [v[2], 0 , -v[0]], [-v[1], v[0], 0]  ])
+            # rotation matrix rotating a into b
+            R = np.eye(3) + vskew + np.dot(vskew, vskew) * ((1-c)/(s**2))
+        else:
+            R = np.eye(3)
+        assert np.allclose(R.dot(a), b)
+        # extract the quaternion
+        qi = Quaternion(matrix=R).elements
+        # components provided by pyquaternion are not in the same order 
+        # as the one expected by the constructor of Quater in SOFA
+        # we must reorder them
+        q[i]= [qi[1], qi[2], qi[3], qi[0]]
+
+    return x, q
+
 
 class BeamFEMForceField (Sofa.PythonScriptController):
 
@@ -31,47 +76,44 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         # rootNode
         rootNode.createObject('RequiredPlugin', name='SofaOpenglVisual')
         rootNode.createObject('RequiredPlugin', name='SofaPython')
-        rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields showCollisionModels')
+        showCollisionModels = 0
+        if showCollisionModels:
+            rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields showCollisionModels')
+        else:
+            rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields')
         rootNode.createObject('DefaultPipeline', draw='0', depth='6', verbose='0')
         rootNode.createObject('BruteForceDetection', name='N2')
         rootNode.createObject('MinProximityIntersection', contactDistance='0.02', alarmDistance='0.03', name='Proximity')
         rootNode.createObject('DefaultContactManager', name='Response', response='default')
 
+        # radius of the beam
         radius = 0.1
-        startWithPenetration = 1
-        PenetrationWanted = 0.1 * radius
-        if startWithPenetration:
-            radiusSphereCollisionModel = str(radius + 0.5 * PenetrationWanted)
-        else:
-            radiusSphereCollisionModel = str(1. * radius)
-        secondBeam = 1
-        # for the cube topology collision objects
-        xminBI = -2
-        xmaxBI = 2
-        yminBI = - radius
-        ymaxBI = + radius
-        zminBI = - radius
-        zmaxBI = + radius
+        radiusSphereCollisionModel = str(1. * radius)
+        # heigth of the strand 
+        h = 2
 
-        bvminBI = str(xminBI) + ' ' + str(yminBI) + ' ' + str(zminBI)
-        bvmaxBI = str(xmaxBI) + ' ' + str(ymaxBI) + ' ' + str(zmaxBI)
-
-        q = [0, 0, 0, 1]
+        # rootNode/beamI --> straight beam
         nn = 5
-        import numpy as np
+        nbeam = nn - 1
         Coord = np.zeros((nn, 7),dtype=float)
-        Coord[:,0] = np.linspace(-2,2, nn)
-        Coord[:,1] = 1 
-        Coord[:, 3:7,] = q
+        Coord[:,0] = 0
+        Coord[:,1] = 0 
+        Coord[:,2] = np.linspace(0,h,nn)
+        lines = np.zeros((nbeam, 2), dtype=int) 
+        lines[:,0] = np.arange(0, nn -1)
+        lines[:,1] = np.arange(1, nn)
+        # topology
+        lines = str(lines.flatten()).replace('[', '').replace(']','')
+        x, q = getCoordPointsAlongHellix(0, h, nn, tmax = 0.5 * np.pi)
+        Coord[:, 3:] = q
+        # import pdb; pdb.set_trace()
         strCoord =  str(Coord.flatten()).replace('\n', '').replace('[', '').replace(']','')
-
-        # rootNode/beamI
         beamI = rootNode.createChild('beamI')
         self.beamI = beamI
         beamI.createObject('EulerImplicitSolver', rayleighStiffness='0', printLog='false', rayleighMass='0.1')
         beamI.createObject('BTDLinearSolver', printLog='false', template='BTDMatrix6d', verbose='false')
         beamI.createObject('MechanicalObject', position=strCoord, name='DOFs', template='Rigid3d')
-        beamI.createObject('MeshTopology', lines='0 1 1 2 2 3 3 4', name='lines')
+        beamI.createObject('MeshTopology', lines=lines, name='lines')
         beamI.createObject('FixedConstraint', indices='0', name='FixedConstraint')
         beamI.createObject('UniformMass', vertexMass='1 1 0.01 0 0 0 0.1 0 0 0 0.1', printLog='false')
         beamI.createObject('BeamFEMForceField', radius=str(radius), name='FEM', poissonRatio='0.49', youngModulus='20000000')
@@ -79,16 +121,18 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         self.Collision = Collision
         beamI.createObject('SphereModel', radius=radiusSphereCollisionModel, name='SphereCollision')
 
-        # rootNode/beam2
-        # quaternion to orientate the beams in the y direction
-        x = 0.7071067811865475
-        q = [0, 0, x, x]
-        nn = 5
-        import numpy as np
+        # rootNode/beam2 --> helicoidal beam
+        nn = 10 
+        nbeam = nn - 1
+        lines = np.zeros((nbeam, 2), dtype=int) 
+        lines[:,0] = np.arange(0, nn -1)
+        lines[:,1] = np.arange(1, nn)
+        # topology
+        lines = str(lines.flatten()).replace('[', '').replace(']','')
         Coord = np.zeros((nn, 7),dtype=float)
-        Coord[:,1] = np.linspace(-2,2, nn)
-        Coord[:,2] = 0.25
-        Coord[:, 3:7,] = q
+        x, q = getCoordPointsAlongHellix(2 * radius, h, nn, tmax = 0.5 * np.pi)
+        Coord[:,:3] = x 
+        Coord[:, 3:] = q
         strCoord =  str(Coord.flatten()).replace('\n', '').replace('[', '').replace(']','')
         beam2 = rootNode.createChild('beam2')
         self.beam2 = beam2
@@ -96,11 +140,12 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         beam2.createObject('BTDLinearSolver', printLog='false', template='BTDMatrix6d', verbose='false')
         # beam2.createObject('MechanicalObject', position='0 -2 0.25 0 0 0 1 0 -1 0.25 0 0 0 1  0 0 0.25 0 0 0 1  0 1 0.25 0 0 0 1  0 2 0.25 0 0 0 1', name='DOFs', template='Rigid')
         beam2.createObject('MechanicalObject', position=strCoord, name='DOFs', template='Rigid3d')
-        beam2.createObject('MeshTopology', lines='0 1 1 2 2 3 3 4', name='lines')
+        beam2.createObject('MeshTopology', lines=lines, name='lines')
         beam2.createObject('FixedConstraint', indices='0', name='FixedConstraint')
         beam2.createObject('UniformMass', vertexMass='1 1 0.01 0 0 0 0.1 0 0 0 0.1', printLog='false')
         beam2.createObject('BeamFEMForceField', radius=str(radius), name='FEM', poissonRatio='0.49', youngModulus='20000000')
         beam2.createObject('SphereModel', radius=radiusSphereCollisionModel, name='SphereCollision')
+
         return 0;
 
     def onMouseButtonLeft(self, mouseX,mouseY,isPressed):

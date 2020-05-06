@@ -18,6 +18,9 @@ Author of scn2python.py: Christoph PAULUS, christoph.paulus@inria.fr
 
 import sys
 import Sofa
+import ParametricHelix
+import numpy as np
+from pyquaternion import Quaternion
 
 class BeamFEMForceField (Sofa.PythonScriptController):
 
@@ -31,76 +34,100 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         # rootNode
         rootNode.createObject('RequiredPlugin', name='SofaOpenglVisual')
         rootNode.createObject('RequiredPlugin', name='SofaPython')
-        rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields showCollisionModels')
+        showCollisionModels = 1
+        useBeamElements = 1 
+        if showCollisionModels:
+            rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields showCollisionModels')
+        else:
+            rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields')
         rootNode.createObject('DefaultPipeline', draw='0', depth='6', verbose='0')
         rootNode.createObject('BruteForceDetection', name='N2')
         rootNode.createObject('MinProximityIntersection', contactDistance='0.02', alarmDistance='0.03', name='Proximity')
         rootNode.createObject('DefaultContactManager', name='Response', response='default')
-
+        # radius of the beam
         radius = 0.1
-        startWithPenetration = 1
-        PenetrationWanted = 0.1 * radius
-        if startWithPenetration:
-            radiusSphereCollisionModel = str(radius + 0.5 * PenetrationWanted)
+        radiusSphereCollisionModel = str(0.95 * radius)
+        # heigth of the strand 
+        h = 2
+        # number of nodes
+        nn = 10
+        nbeam = nn - 1
+        # topology
+        lines = np.zeros((nbeam, 2), dtype=int) 
+        lines[:,0] = np.arange(0, nn -1)
+        lines[:,1] = np.arange(1, nn)
+        lines = str(lines.flatten()).replace('[', '').replace(']','')
+
+        BC = 'AxialForceAtTip'# 'MoveNodeAtTip'
+
+        x, q = ParametricHelix.getCoordPointsAlongHellix(0, h, nn, tmax = 0.5 * np.pi)
+        if useBeamElements:
+            number_dofs_per_node = 7
         else:
-            radiusSphereCollisionModel = str(1. * radius)
-        secondBeam = 1
-        # for the cube topology collision objects
-        xminBI = -2
-        xmaxBI = 2
-        yminBI = - radius
-        ymaxBI = + radius
-        zminBI = - radius
-        zmaxBI = + radius
+            number_dofs_per_node = 3
 
-        bvminBI = str(xminBI) + ' ' + str(yminBI) + ' ' + str(zminBI)
-        bvmaxBI = str(xmaxBI) + ' ' + str(ymaxBI) + ' ' + str(zmaxBI)
-
-        q = [0, 0, 0, 1]
-        nn = 5
-        import numpy as np
-        Coord = np.zeros((nn, 7),dtype=float)
-        Coord[:,0] = np.linspace(-2,2, nn)
-        Coord[:,1] = 1 
-        Coord[:, 3:7,] = q
+        Coord = np.zeros((nn, number_dofs_per_node),dtype=float)
+        Coord[:, :3] = x 
+        if useBeamElements:
+            Coord[:, 3:] = q
+        # import pdb; pdb.set_trace()
         strCoord =  str(Coord.flatten()).replace('\n', '').replace('[', '').replace(']','')
 
-        # rootNode/beamI
+        # rootNode/beamI --> straight beam
         beamI = rootNode.createChild('beamI')
         self.beamI = beamI
         beamI.createObject('EulerImplicitSolver', rayleighStiffness='0', printLog='false', rayleighMass='0.1')
         beamI.createObject('BTDLinearSolver', printLog='false', template='BTDMatrix6d', verbose='false')
         beamI.createObject('MechanicalObject', position=strCoord, name='DOFs', template='Rigid3d')
-        beamI.createObject('MeshTopology', lines='0 1 1 2 2 3 3 4', name='lines')
+        beamI.createObject('MeshTopology', lines=lines, name='lines')
         beamI.createObject('FixedConstraint', indices='0', name='FixedConstraint')
         beamI.createObject('UniformMass', vertexMass='1 1 0.01 0 0 0 0.1 0 0 0 0.1', printLog='false')
-        beamI.createObject('BeamFEMForceField', radius=str(radius), name='FEM', poissonRatio='0.49', youngModulus='20000000')
+        if useBeamElements:
+            beamI.createObject('BeamFEMForceField', radius=str(radius), name='FEM', poissonRatio='0.49', youngModulus='20000000')
+        else:
+            beamI.createObject('MeshSpringForceField', name='Springs', stiffness='450000', template='Vec3d')
         Collision = beamI.createChild('Collision')
         self.Collision = Collision
         beamI.createObject('SphereModel', radius=radiusSphereCollisionModel, name='SphereCollision')
 
-        # rootNode/beam2
-        # quaternion to orientate the beams in the y direction
-        x = 0.7071067811865475
-        q = [0, 0, x, x]
-        nn = 5
-        import numpy as np
+        # rootNode/beamJ --> helicoidal beam
         Coord = np.zeros((nn, 7),dtype=float)
-        Coord[:,1] = np.linspace(-2,2, nn)
-        Coord[:,2] = 0.25
-        Coord[:, 3:7,] = q
+        x, q = ParametricHelix.getCoordPointsAlongHellix(2 * radius, h, nn, tmax = 0.5 * np.pi)
+        Coord[:,:3] = x 
+        Coord[:, 3:] = q
         strCoord =  str(Coord.flatten()).replace('\n', '').replace('[', '').replace(']','')
-        beam2 = rootNode.createChild('beam2')
-        self.beam2 = beam2
-        beam2.createObject('EulerImplicitSolver', rayleighStiffness='0', printLog='false', rayleighMass='0.1')
-        beam2.createObject('BTDLinearSolver', printLog='false', template='BTDMatrix6d', verbose='false')
-        # beam2.createObject('MechanicalObject', position='0 -2 0.25 0 0 0 1 0 -1 0.25 0 0 0 1  0 0 0.25 0 0 0 1  0 1 0.25 0 0 0 1  0 2 0.25 0 0 0 1', name='DOFs', template='Rigid')
-        beam2.createObject('MechanicalObject', position=strCoord, name='DOFs', template='Rigid3d')
-        beam2.createObject('MeshTopology', lines='0 1 1 2 2 3 3 4', name='lines')
-        beam2.createObject('FixedConstraint', indices='0', name='FixedConstraint')
-        beam2.createObject('UniformMass', vertexMass='1 1 0.01 0 0 0 0.1 0 0 0 0.1', printLog='false')
-        beam2.createObject('BeamFEMForceField', radius=str(radius), name='FEM', poissonRatio='0.49', youngModulus='20000000')
-        beam2.createObject('SphereModel', radius=radiusSphereCollisionModel, name='SphereCollision')
+        beamJ = rootNode.createChild('beamJ')
+        self.beamJ = beamJ
+        beamJ.createObject('EulerImplicitSolver', rayleighStiffness='0', printLog='false', rayleighMass='0.1')
+        beamJ.createObject('BTDLinearSolver', printLog='false', template='BTDMatrix6d', verbose='false')
+        beamJ.createObject('MechanicalObject', position=strCoord, name='DOFs', template='Rigid3d')
+        beamJ.createObject('MeshTopology', lines=lines, name='lines')
+        beamJ.createObject('FixedConstraint', indices='0', name='FixedConstraint')
+        beamJ.createObject('UniformMass', vertexMass='1 1 0.01 0 0 0 0.1 0 0 0 0.1', printLog='false')
+        if useBeamElements:
+            beamJ.createObject('BeamFEMForceField', radius=str(radius), name='FEM', poissonRatio='0.49', youngModulus='20000000')
+        else:
+            beamJ.createObject('MeshSpringForceField', name='Springs', stiffness='450000', template='Vec3d')
+        beamJ.createObject('SphereModel', radius=radiusSphereCollisionModel, name='SphereCollision')
+
+        if BC == 'AxialForceAtTip':
+            #index of the last node
+            index = str(nn-1)
+            beamI.createObject('ConstantForceField', indices=index, showArrowSize='0.0005', printLog='1', forces='0 0 1000 0 0 0')
+            beamJ.createObject('ConstantForceField', indices=index, showArrowSize='0.0005', printLog='1', forces='0 0 1000 0 0 0')
+        elif BC == 'MoveNodeAtTip':
+            index = str(nn-1)
+            # not implemented apparently 
+            beamI.createObject('LinearMovementConstraint', keyTimes='0 10', template='Rigid3d', movements='0 0 0   0 0 0                 0 0 1   0 0 0', indices=index)
+            beamJ.createObject('LinearMovementConstraint', keyTimes='0 10', template='Rigid3d', movements='0 0 0   0 0 0                 0 0 1   0 0 0', indices=index)
+            
+        else:
+            raise NotImplementedError
+
+
+        beamI.createObject('Monitor', name="ReactionForceBeamI", indices='0', template="Rigid3d", showPositions=True, PositionsColor="1 0 1 1", ExportPositions=False, showVelocities=False, VelocitiesColor="0.5 0.5 1 1", ExportVelocities=False, showForces=True, ForcesColor="0.8 0.2 0.2 1", ExportForces=True, showTrajectories=False, TrajectoriesPrecision="0.1", TrajectoriesColor="0 1 1 1", sizeFactor="1")
+
+
         return 0;
 
     def onMouseButtonLeft(self, mouseX,mouseY,isPressed):

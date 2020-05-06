@@ -18,6 +18,9 @@ Author of scn2python.py: Christoph PAULUS, christoph.paulus@inria.fr
 
 import sys
 import Sofa
+import ParametricHelix
+import numpy as np
+from pyquaternion import Quaternion
 
 class BeamFEMForceField (Sofa.PythonScriptController):
 
@@ -31,76 +34,93 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         # rootNode
         rootNode.createObject('RequiredPlugin', name='SofaOpenglVisual')
         rootNode.createObject('RequiredPlugin', name='SofaPython')
-        rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields showCollisionModels')
-        rootNode.createObject('DefaultPipeline', draw='0', depth='6', verbose='0')
-        rootNode.createObject('BruteForceDetection', name='N2')
-        rootNode.createObject('MinProximityIntersection', contactDistance='0.02', alarmDistance='0.03', name='Proximity')
-        rootNode.createObject('DefaultContactManager', name='Response', response='default')
+        rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields')
 
+        # radius of the beam
         radius = 0.1
-        startWithPenetration = 1
-        PenetrationWanted = 0.1 * radius
-        if startWithPenetration:
-            radiusSphereCollisionModel = str(radius + 0.5 * PenetrationWanted)
-        else:
-            radiusSphereCollisionModel = str(1. * radius)
-        secondBeam = 1
-        # for the cube topology collision objects
-        xminBI = -2
-        xmaxBI = 2
-        yminBI = - radius
-        ymaxBI = + radius
-        zminBI = - radius
-        zmaxBI = + radius
-
-        bvminBI = str(xminBI) + ' ' + str(yminBI) + ' ' + str(zminBI)
-        bvmaxBI = str(xmaxBI) + ' ' + str(ymaxBI) + ' ' + str(zmaxBI)
-
-        q = [0, 0, 0, 1]
+        # number of nodes
         nn = 5
-        import numpy as np
+        nbeam = nn - 1
+        # topology
+        lines = np.zeros((nbeam, 2), dtype=int) 
+        lines[:,0] = np.arange(0, nn -1)
+        lines[:,1] = np.arange(1, nn)
+        # convert to string
+        lines = str(lines.flatten()).replace('[', '').replace(']','')
+
+        # position of the nodes
         Coord = np.zeros((nn, 7),dtype=float)
-        Coord[:,0] = np.linspace(-2,2, nn)
-        Coord[:,1] = 1 
-        Coord[:, 3:7,] = q
+        x = np.zeros(nn,dtype=float)
+        y = np.zeros(nn, dtype=float)
+        z = np.zeros(nn, dtype=float)
+        xp = np.zeros(nn,dtype=float)
+        yp = np.zeros(nn, dtype=float)
+        zp = np.zeros(nn, dtype=float)
+        # coefficients of the equation of a titled straight line
+        a = 1
+        b = 1 
+        c = 1
+        t = np.linspace(0,1, nn)
+        # components of the position vectors
+        x = a * t 
+        y = b * t 
+        z = c * t 
+        # components of the field of tangent vectors 
+        xp = a 
+        yp = b 
+        zp = c 
+        nrm = np.sqrt(a**2 + b**2 + c**2)
+
+        # https://math.stackexchange.com/a/476311/392320
+        q = np.zeros((nn,4), dtype = float)
+        a = np.array([1,0,0])
+        # vector connecting the two nodes of the future beam
+        b = np.array([xp, yp, zp])/nrm
+        v = np.cross(a,b)
+        s = np.linalg.norm(v) 
+        
+        if not np.allclose(s, 0):
+            c = np.dot(a,b)
+            vskew = np.array([[0, -v[2], v[1]], [v[2], 0 , -v[0]], [-v[1], v[0], 0]  ])
+            # rotation matrix rotating a into b
+            R = np.eye(3) + vskew + np.dot(vskew, vskew) * ((1-c)/(s**2))
+        else:
+            R = np.eye(3)
+        try:
+            assert np.allclose(R.dot(a), b)
+        except AssertionError:
+            import pdb; pdb.set_trace()
+        qii = Quaternion(matrix=R).elements
+        # reorder the order of the components of the quaternion 
+        # in pyquaternion: wxyz
+        # in sofa: xyzw --> https://www.sofa-framework.org/api/master/sofa/html/classsofa_1_1helper_1_1_quater.html
+        # qfinal = [q[1], q[2], q[3], q[0]]
+        qi= Quaternion(axis=[0,0,1], radians=0.25 * np.pi)
+        # import pdb; pdb.set_trace()
+        qfinal = [qii[1], qii[2], qii[3], qii[0]]
+        # import pdb; pdb.set_trace()
+        # qfinal = [0, 0, 1, 0.25 * np.pi]
+        q[:] = qfinal
+        # q[0] = [0, 0, 1, 0.25 * np.pi] 
+
+        Coord[:,0] = x
+        Coord[:,1] = y
+        Coord[:,2] = z
+        Coord[:, 3:] = q 
         strCoord =  str(Coord.flatten()).replace('\n', '').replace('[', '').replace(']','')
 
-        # rootNode/beamI
+        # rootNode/beamI --> straight beam
         beamI = rootNode.createChild('beamI')
         self.beamI = beamI
         beamI.createObject('EulerImplicitSolver', rayleighStiffness='0', printLog='false', rayleighMass='0.1')
         beamI.createObject('BTDLinearSolver', printLog='false', template='BTDMatrix6d', verbose='false')
+        # beamI.createObject('MechanicalObject', position=strCoord, rotation='0 0 45', name='DOFs', template='Rigid3d')
         beamI.createObject('MechanicalObject', position=strCoord, name='DOFs', template='Rigid3d')
-        beamI.createObject('MeshTopology', lines='0 1 1 2 2 3 3 4', name='lines')
+        beamI.createObject('MeshTopology', lines=lines, name='lines')
         beamI.createObject('FixedConstraint', indices='0', name='FixedConstraint')
         beamI.createObject('UniformMass', vertexMass='1 1 0.01 0 0 0 0.1 0 0 0 0.1', printLog='false')
-        beamI.createObject('BeamFEMForceField', radius=str(radius), name='FEM', poissonRatio='0.49', youngModulus='20000000')
-        Collision = beamI.createChild('Collision')
-        self.Collision = Collision
-        beamI.createObject('SphereModel', radius=radiusSphereCollisionModel, name='SphereCollision')
+        beamI.createObject('BeamFEMForceField', radius=radius, name='FEM', poissonRatio='0.49', youngModulus='1000')
 
-        # rootNode/beam2
-        # quaternion to orientate the beams in the y direction
-        x = 0.7071067811865475
-        q = [0, 0, x, x]
-        nn = 5
-        import numpy as np
-        Coord = np.zeros((nn, 7),dtype=float)
-        Coord[:,1] = np.linspace(-2,2, nn)
-        Coord[:,2] = 0.25
-        Coord[:, 3:7,] = q
-        strCoord =  str(Coord.flatten()).replace('\n', '').replace('[', '').replace(']','')
-        beam2 = rootNode.createChild('beam2')
-        self.beam2 = beam2
-        beam2.createObject('EulerImplicitSolver', rayleighStiffness='0', printLog='false', rayleighMass='0.1')
-        beam2.createObject('BTDLinearSolver', printLog='false', template='BTDMatrix6d', verbose='false')
-        # beam2.createObject('MechanicalObject', position='0 -2 0.25 0 0 0 1 0 -1 0.25 0 0 0 1  0 0 0.25 0 0 0 1  0 1 0.25 0 0 0 1  0 2 0.25 0 0 0 1', name='DOFs', template='Rigid')
-        beam2.createObject('MechanicalObject', position=strCoord, name='DOFs', template='Rigid3d')
-        beam2.createObject('MeshTopology', lines='0 1 1 2 2 3 3 4', name='lines')
-        beam2.createObject('FixedConstraint', indices='0', name='FixedConstraint')
-        beam2.createObject('UniformMass', vertexMass='1 1 0.01 0 0 0 0.1 0 0 0 0.1', printLog='false')
-        beam2.createObject('BeamFEMForceField', radius=str(radius), name='FEM', poissonRatio='0.49', youngModulus='20000000')
-        beam2.createObject('SphereModel', radius=radiusSphereCollisionModel, name='SphereCollision')
         return 0;
 
     def onMouseButtonLeft(self, mouseX,mouseY,isPressed):
