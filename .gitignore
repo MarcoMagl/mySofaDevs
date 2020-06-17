@@ -30,3 +30,11 @@
 *.exe
 *.out
 *.app
+
+# Others
+*.pyc
+*.vtu
+*.vtk
+*.log*
+*.py.log
+*.pkl

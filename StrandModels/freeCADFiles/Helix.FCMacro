@@ -1,0 +1,252 @@
+import FreeCAD, Draft
+from FreeCAD import Base
+import Part
+import numpy as np
+
+
+
+def getCoordPointsAlongHellixAndTgtVect(r, h, npt, tmax, c = 1):
+    x = np.zeros((npt,3), dtype = float)
+    # field of tangent vectors
+    xp = np.zeros((npt,3), dtype = float)
+    t = np.linspace(0,tmax, npt)
+    x[:,0] = r * np.cos(t)
+    x[:,1] = r * np.sin(t)
+    x[:,2] = c * t
+    xp[:,0] = -r * np.sin(t)
+    xp[:,1] = r * np.cos(t)
+    xp[:,2] = c 
+    return x, xp 
+
+
+doc = App.newDocument("Unnamed")
+#Gui.activateWorkbench("PartDesignWorkbench")
+doc.addObject('PartDesign::Body','Body')
+import PartDesign#Gui
+#Gui.activeView().setActiveObject('pdbody', doc.Body)
+#Gui.Selection.clearSelection()
+#Gui.Selection.addSelection(App.ActiveDocument.Body)
+App.ActiveDocument.recompute()
+doc.Body.newObject('Sketcher::SketchObject','Sketch')
+doc.Sketch.Support = (doc.XY_Plane, [''])
+doc.Sketch.MapMode = 'FlatFace'
+App.ActiveDocument.recompute()
+#Gui.activeDocument().setEdit('Sketch')
+#Gui.activateWorkbench('SketcherWorkbench')
+import PartDesign#Gui
+ActiveSketch = App.ActiveDocument.getObject('Sketch')
+tv = Show.TempoVis(App.ActiveDocument)
+if ActiveSketch.ViewObject.HideDependent:
+  objs = tv.get_all_dependent(ActiveSketch)
+  objs = filter(lambda x: not x.TypeId.startswith("TechDraw::"), objs)
+  objs = filter(lambda x: not x.TypeId.startswith("Drawing::"), objs)
+  tv.hide(objs)
+if ActiveSketch.ViewObject.ShowSupport:
+  tv.show([ref[0] for ref in ActiveSketch.Support if not ref[0].isDerivedFrom("PartDesign::Plane")])
+if ActiveSketch.ViewObject.ShowLinks:
+  tv.show([ref[0] for ref in ActiveSketch.ExternalGeometry])
+tv.hide(ActiveSketch)
+ActiveSketch.ViewObject.TempoVis = tv
+del(tv)
+
+ActiveSketch = App.ActiveDocument.getObject('Sketch')
+if ActiveSketch.ViewObject.RestoreCamera:
+  ActiveSketch.ViewObject.TempoVis.saveCamera()
+
+UL = 1
+# pitch length
+pitch = 115 * UL
+# heigth of the strand 
+h = 1 * pitch
+# radius of the core wire 
+# found in the paper of Jiang 1999
+# careful because the diameter is given, not the radius
+rCore = 0.5 * 3.93 * UL
+rHelli = 0.5 * 3.63 * UL
+
+App.ActiveDocument.Sketch.addGeometry(Part.Circle(App.Vector(0.000000,0.000000,0),App.Vector(0,0,1), rHelli),False)
+App.ActiveDocument.Sketch.addConstraint(Sketcher.Constraint('Radius',0, rHelli)) 
+App.ActiveDocument.Sketch.setDatum(0,App.Units.Quantity(str(rHelli) + ' mm'))
+App.ActiveDocument.Sketch.movePoint(0,0,App.Vector(-0.540702,7.804143,0),0)
+App.ActiveDocument.Sketch.addConstraint(Sketcher.Constraint('Coincident', 0, 3, -1, 1)) 
+#Gui.getDocument('Unnamed').resetEdit()
+ActiveSketch = App.ActiveDocument.getObject('Sketch')
+tv = ActiveSketch.ViewObject.TempoVis
+if tv:
+  tv.restore()
+ActiveSketch.ViewObject.TempoVis = None
+del(tv)
+
+"""
+#Gui.activateWorkbench('PartDesignWorkbench')
+App.getDocument('Unnamed').recompute()
+doc.Body.newObject("PartDesign::AdditivePipe","AdditivePipe")
+doc.AdditivePipe.Profile = doc.Sketch
+App.ActiveDocument.recompute()
+#Gui.activeDocument().hide("Sketch")
+App.ActiveDocument.recompute()
+#Gui.ActiveDocument.AdditivePipe.ShapeColor=#Gui.ActiveDocument.Body.ShapeColor
+#Gui.ActiveDocument.AdditivePipe.LineColor=#Gui.ActiveDocument.Body.LineColor
+#Gui.ActiveDocument.AdditivePipe.PointColor=#Gui.ActiveDocument.Body.PointColor
+#Gui.ActiveDocument.AdditivePipe.Transparency=#Gui.ActiveDocument.Body.Transparency
+#Gui.ActiveDocument.AdditivePipe.DisplayMode=#Gui.ActiveDocument.Body.DisplayMode
+#Gui.activeDocument().setEdit('AdditivePipe', 0)
+#Gui.Selection.clearSelection()
+#Gui.activeDocument().resetEdit()
+#Gui.getDocument("Unnamed").getObject("XZ_Plane").Visibility=False
+#Gui.getDocument("Unnamed").getObject("XZ_Plane").Visibility=True
+#Gui.getDocument("Unnamed").getObject("Origin").Visibility=True
+# doc.Body.newObject('Sketcher::SketchObject','Sketch001')
+# doc.Sketch001.Support = (doc.YZ_Plane, '')
+# doc.Sketch001.MapMode = 'FlatFace'
+# App.ActiveDocument.recompute()
+# #Gui.activeDocument().setEdit('Sketch001')
+# #Gui.activateWorkbench('SketcherWorkbench')
+# import PartDesign#Gui
+# ActiveSketch = App.ActiveDocument.getObject('Sketch001')
+# tv = Show.TempoVis(App.ActiveDocument)
+# if ActiveSketch.ViewObject.HideDependent:
+#   objs = tv.get_all_dependent(ActiveSketch)
+#   objs = filter(lambda x: not x.TypeId.startswith("TechDraw::"), objs)
+#   objs = filter(lambda x: not x.TypeId.startswith("Drawing::"), objs)
+#   tv.hide(objs)
+# if ActiveSketch.ViewObject.ShowSupport:
+#   tv.show([ref[0] for ref in ActiveSketch.Support if not ref[0].isDerivedFrom("PartDesign::Plane")])
+# if ActiveSketch.ViewObject.ShowLinks:
+#   tv.show([ref[0] for ref in ActiveSketch.ExternalGeometry])
+# tv.hide(ActiveSketch)
+# ActiveSketch.ViewObject.TempoVis = tv
+# del(tv)
+
+# ActiveSketch = App.ActiveDocument.getObject('Sketch001')
+# if ActiveSketch.ViewObject.RestoreCamera:
+#   ActiveSketch.ViewObject.TempoVis.saveCamera()
+nn = 100
+CoordHelli, TgtVec = getCoordPointsAlongHellixAndTgtVect(rCore + rHelli, h * UL, nn , 2* np.pi, 0.5 * pitch)
+p = []
+for i in range(nn):
+    p.append(FreeCAD.Vector(CoordHelli[i, 0],CoordHelli[i, 1],CoordHelli[i, 2]))
+curve = Part.makePolygon(p)
+BSpline = Draft.makeBSpline(curve, closed=False, placement=None, face=None)#, support= None)
+BSpline.Label = 'Sketch001'
+
+# App.ActiveDocument.Sketch001.addGeometry(Part.Circle(App.Vector(0.000000,0.000000,0),App.Vector(0,0,1),10),True)
+# App.ActiveDocument.Sketch001.addGeometry(Part.Circle(App.Vector(10.222722,8.957644,0),App.Vector(0,0,1),10),True)
+# App.ActiveDocument.Sketch001.addConstraint(Sketcher.Constraint('Radius',0,2.000000)) 
+# App.ActiveDocument.Sketch001.addConstraint(Sketcher.Constraint('Equal',0,1)) 
+# App.ActiveDocument.Sketch001.addGeometry(Part.Circle(App.Vector(20.243746,-12.814657,0),App.Vector(0,0,1),10),True)
+# App.ActiveDocument.Sketch001.addConstraint(Sketcher.Constraint('Equal',0,2)) 
+# App.ActiveDocument.Sketch001.addGeometry(Part.Circle(App.Vector(32.103165,-8.092519,0),App.Vector(0,0,1),10),True)
+# App.ActiveDocument.Sketch001.addConstraint(Sketcher.Constraint('Equal',0,3)) 
+# App.ActiveDocument.Sketch001.addGeometry(Part.Circle(App.Vector(34.085735,-0.594773,0),App.Vector(0,0,1),10),True)
+# App.ActiveDocument.Sketch001.addConstraint(Sketcher.Constraint('Equal',0,4)) 
+# App.ActiveDocument.Sketch001.addGeometry(Part.Circle(App.Vector(34.626446,8.092519,0),App.Vector(0,0,1),10),True)
+# App.ActiveDocument.Sketch001.addConstraint(Sketcher.Constraint('Equal',0,5)) 
+# App.ActiveDocument.Sketch001.addGeometry(Part.BSplineCurve([App.Vector(0,0),App.Vector(10.2227,8.95764),App.Vector(20.2437,-12.8147),App.Vector(32.1032,-8.09252),App.Vector(34.0857,-0.594773),App.Vector(34.6264,8.09252)],None,None,False,3,None,False),False)
+# conList = []
+# conList.append(Sketcher.Constraint('InternalAlignment:Sketcher::BSplineControlPoint',0,3,6,0))
+# conList.append(Sketcher.Constraint('InternalAlignment:Sketcher::BSplineControlPoint',1,3,6,1))
+# conList.append(Sketcher.Constraint('InternalAlignment:Sketcher::BSplineControlPoint',2,3,6,2))
+# conList.append(Sketcher.Constraint('InternalAlignment:Sketcher::BSplineControlPoint',3,3,6,3))
+# conList.append(Sketcher.Constraint('InternalAlignment:Sketcher::BSplineControlPoint',4,3,6,4))
+# conList.append(Sketcher.Constraint('InternalAlignment:Sketcher::BSplineControlPoint',5,3,6,5))
+# App.ActiveDocument.Sketch001.addConstraint(conList)
+
+# App.ActiveDocument.Sketch001.exposeInternalGeometry(6)
+# #Gui.getDocument('Unnamed').resetEdit()
+# ActiveSketch = App.ActiveDocument.getObject('Sketch001')
+# tv = ActiveSketch.ViewObject.TempoVis
+# if tv:
+#   tv.restore()
+# ActiveSketch.ViewObject.TempoVis = None
+# del(tv)
+
+#Gui.activateWorkbench('PartDesignWorkbench')
+App.getDocument('Unnamed').recompute()
+#Gui.activateWorkbench('SketcherWorkbench')
+import PartDesign#Gui
+ActiveSketch = App.ActiveDocument.getObject('Sketch')
+tv = Show.TempoVis(App.ActiveDocument)
+if ActiveSketch.ViewObject.HideDependent:
+  objs = tv.get_all_dependent(ActiveSketch)
+  objs = filter(lambda x: not x.TypeId.startswith("TechDraw::"), objs)
+  objs = filter(lambda x: not x.TypeId.startswith("Drawing::"), objs)
+  tv.hide(objs)
+if ActiveSketch.ViewObject.ShowSupport:
+  tv.show([ref[0] for ref in ActiveSketch.Support if not ref[0].isDerivedFrom("PartDesign::Plane")])
+if ActiveSketch.ViewObject.ShowLinks:
+  tv.show([ref[0] for ref in ActiveSketch.ExternalGeometry])
+tv.hide(ActiveSketch)
+ActiveSketch.ViewObject.TempoVis = tv
+del(tv)
+
+ActiveSketch = App.ActiveDocument.getObject('Sketch')
+if ActiveSketch.ViewObject.RestoreCamera:
+  ActiveSketch.ViewObject.TempoVis.saveCamera()
+
+App.ActiveDocument.Sketch.setDatum(0,App.Units.Quantity('4.000000 mm'))
+#Gui.getDocument('Unnamed').resetEdit()
+ActiveSketch = App.ActiveDocument.getObject('Sketch')
+tv = ActiveSketch.ViewObject.TempoVis
+if tv:
+  tv.restore()
+ActiveSketch.ViewObject.TempoVis = None
+del(tv)
+
+#Gui.activateWorkbench('PartDesignWorkbench')
+App.getDocument('Unnamed').recompute()
+#Gui.activateWorkbench('SketcherWorkbench')
+import PartDesign#Gui
+ActiveSketch = App.ActiveDocument.getObject('Sketch001')
+# tv = Show.TempoVis(App.ActiveDocument)
+# if ActiveSketch.ViewObject.HideDependent:
+#   objs = tv.get_all_dependent(ActiveSketch)
+#   objs = filter(lambda x: not x.TypeId.startswith("TechDraw::"), objs)
+#   objs = filter(lambda x: not x.TypeId.startswith("Drawing::"), objs)
+#   tv.hide(objs)
+# if ActiveSketch.ViewObject.ShowSupport:
+#   tv.show([ref[0] for ref in ActiveSketch.Support if not ref[0].isDerivedFrom("PartDesign::Plane")])
+# if ActiveSketch.ViewObject.ShowLinks:
+#   tv.show([ref[0] for ref in ActiveSketch.ExternalGeometry])
+# tv.hide(ActiveSketch)
+# ActiveSketch.ViewObject.TempoVis = tv
+# del(tv)
+
+ActiveSketch = App.ActiveDocument.getObject('Sketch001')
+# if ActiveSketch.ViewObject.RestoreCamera:
+#   ActiveSketch.ViewObject.TempoVis.saveCamera()
+
+#Gui.getDocument('Unnamed').resetEdit()
+ActiveSketch = App.ActiveDocument.getObject('Sketch001')
+# tv = ActiveSketch.ViewObject.TempoVis
+# if tv:
+#   tv.restore()
+# ActiveSketch.ViewObject.TempoVis = None
+# del(tv)
+
+
+doc.Body.newObject("PartDesign::AdditivePipe","AdditivePipe")
+doc.AdditivePipe.Profile = doc.Sketch
+doc = doc
+pip = doc.AdditivePipe
+pip.Spine = BSpline 
+doc.recompute()
+
+
+# #Gui.activateWorkbench('PartDesignWorkbench')
+# App.getDocument('Unnamed').recompute()
+# doc.Body.newObject("PartDesign::AdditivePipe","AdditivePipe")
+# doc.AdditivePipe.Profile = doc.Sketch
+# App.ActiveDocument.recompute()
+# #Gui.activeDocument().hide("Sketch")
+# App.ActiveDocument.recompute()
+# #Gui.ActiveDocument.AdditivePipe.ShapeColor=#Gui.ActiveDocument.Body.ShapeColor
+# #Gui.ActiveDocument.AdditivePipe.LineColor=#Gui.ActiveDocument.Body.LineColor
+# #Gui.ActiveDocument.AdditivePipe.PointColor=#Gui.ActiveDocument.Body.PointColor
+# #Gui.ActiveDocument.AdditivePipe.Transparency=#Gui.ActiveDocument.Body.Transparency
+# #Gui.ActiveDocument.AdditivePipe.DisplayMode=#Gui.ActiveDocument.Body.DisplayMode
+# #Gui.activeDocument().setEdit('AdditivePipe', 0)
+# #Gui.Selection.clearSelection()
+# App.ActiveDocument.recompute()
+# #Gui.activeDocument().resetEdit()
+"""
