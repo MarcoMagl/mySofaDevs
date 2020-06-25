@@ -34,14 +34,15 @@ def getCoordPointsAlongHellix(r, layangle, npt, tmax, c = 1):
     # field of tangent vectors
     xp = np.zeros((npt,3), dtype = float)
     t = np.linspace(0,tmax, npt)
+    # Bussolati thesis --> eq. 2.2
     x[:,0] = r * np.cos(t)
     x[:,1] = r * np.sin(t)
-    x[:,2] = r * (t/np.tan(layangle))
+    x[:,2] = r * (np.cos(layangle)/np.sin(layangle)) * t
     # import pdb; pdb.set_trace()
 
     xp[:,0] = -r * np.sin(t)
     xp[:,1] = r * np.cos(t)
-    xp[:,2] =  r/np.tan(layangle)
+    xp[:,2] = r * (np.cos(layangle)/np.sin(layangle)) 
 
     # https://math.stackexchange.com/a/476311/392320
     q = np.zeros((npt,4), dtype = float)
@@ -52,7 +53,7 @@ def getCoordPointsAlongHellix(r, layangle, npt, tmax, c = 1):
         b = xp[i]/np.linalg.norm(xp[i])
         q[i] = getOrientationQuaternion(a, b) 
 
-        return x, q
+    return x, q
 
 class BeamFEMForceField (Sofa.PythonScriptController):
 
@@ -69,7 +70,7 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         p = 115 * UL
         # heigth of the strand 
         h = p 
-        layAngle = 11.8 # --> 90 - 72.8 where 72.8 is given by Jiang in his paper
+        layAngle = 11.2 # --> 90 - 72.8 where 72.8 is given by Jiang in his paper
         # radius of the core wire 
         # found in the paper of Jiang 1999
         # careful because the diameter is given, not the radius
@@ -82,18 +83,24 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         # Poisson's ratio
         nu = 0.3
         # parameter that control how many pitch length we have in the rope
-        npitch = 2
-        tmax = 0.5 * npitch * np.pi
+        npitch = 1
+        tmax = npitch * 2* np.pi
         # number of nodes
-        nn = npitch * int(self.commandLineArguments[1])
+        if len(self.commandLineArguments) > 1:
+            nn = npitch * int(self.commandLineArguments[1])
+        else:
+            print("Number of nodes per wire not provided. Taking default value")
+            nn = 25
         assert nn > 1
         nbeam = nn - 1
         # target strand strain
         epsilon = 0.01 
         # take gravity into account
         gravity = 0
+        showCollisionModels = 0
+
         BC = ['AxialForceAtTip', 'MoveNodeAtTip'][1]
-        indexNodeBC = str(nn-1)
+        indexNodeBC = nn-1
         DirectoryResults='./Tensile/'
         self.DirectoryResults = DirectoryResults
         if not os.path.exists(DirectoryResults):
@@ -102,7 +109,7 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         dir_name = DirectoryResults 
         test = os.listdir(dir_name)
         for item in test:
-            if item.endswith(".txt"):
+            if item.endswith(".txt") or item.endswith(".vtu"):
                 os.remove(os.path.join(dir_name, item))
 
         self.rootNode = rootNode
@@ -110,27 +117,28 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         rootNode.createObject('RequiredPlugin', name='SofaOpenglVisual')
         rootNode.createObject('RequiredPlugin', name='SofaPython')
         rootNode.createObject('RequiredPlugin', name='SofaExporter')
+        rootNode.createObject('RequiredPlugin', name='SofaValidation')
 
-        showCollisionModels = 0
         if showCollisionModels:
             rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields showCollisionModels')
         else:
             rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields')
 
-        # rootNode.createObject('DefaultPipeline', draw='0', depth='6', verbose='0')
-        # rootNode.createObject('BruteForceDetection', name='N2')
-        # rootNode.createObject('MinProximityIntersection', contactDistance= 0.001 * UL, alarmDistance= 0.01 * UL, name='Proximity')
-        # rootNode.createObject('DefaultContactManager', name='Response', response='default')
+        rootNode.createObject('DefaultPipeline', draw='0', depth='6', verbose='0')
+        rootNode.createObject('BruteForceDetection', name='N2')
+        rootNode.createObject('MinProximityIntersection', contactDistance= 0.001 * UL, alarmDistance= 0.01 * UL, name='Proximity')
+        rootNode.createObject('DefaultContactManager', name='Response', response='default')
 
         if gravity:
             rootNode.gravity = [0,0,-9.81]
         else:
             rootNode.gravity = [0,0,0]
 
-        rootNode.dt = 0.005
-        rootNode.createObject('EulerImplicitSolver', rayleighStiffness='0', printLog='false', rayleighMass='0.1')
-        rootNode.createObject('CGLinearSolver', threshold='1.0e-9', tolerance='1.0e-9', name='linear solver', iterations='25')
-
+        # rootNode.createObject('EulerImplicitSolver', rayleighStiffness='0', printLog='false', rayleighMass='0.1')
+        rootNode.createObject('StaticSolver', newton_iterations=100,
+            correction_tolerance_threshold='1.0e-9', residual_tolerance_threshold='1.0e-9',
+            should_diverge_when_residual_is_growing=1)
+        rootNode.createObject('CGLinearSolver', threshold='1.0e-9', tolerance='1.0e-9', name='linear solver', iterations='1000')
         # topology
         lines = np.zeros((nbeam, 2), dtype=int) 
         lines[:,0] = np.arange(0, nn -1)
@@ -144,7 +152,7 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         # rootNode/beamJ --> helicoidal beam
         nHelix = 6
         rotAngle = 360/nHelix
-        x, q = getCoordPointsAlongHellix( 1.1 * (rCore+rHelli), np.rad2deg(layAngle), nn, tmax = tmax, c = p)
+        x, q = getCoordPointsAlongHellix( 1.1 * (rCore+rHelli), np.deg2rad(layAngle), nn, tmax = tmax, c = p)
         Coord = np.zeros((nn, number_dofs_per_node),dtype=float)
         Coord[:,:3] = x 
         Coord[:, 3:] = q
@@ -172,27 +180,25 @@ class BeamFEMForceField (Sofa.PythonScriptController):
             strbeam = 'HellicalBeam' + str(i) 
             HeliBeami = rootNode.createChild(strbeam)
             setattr(self, strbeam, HeliBeami)
-            # HeliBeami.createObject('EulerImplicitSolver', rayleighStiffness='0', printLog='false', rayleighMass='0.1')
-            # HeliBeami.createObject('BTDLinearSolver', printLog='false', template='BTDMatrix6d', verbose='false')
-            rot = "0 0 " + str(i * rotAngle)
+            rot = [0, 0, i * rotAngle]
             HeliBeami.createObject('MechanicalObject', position=Coord.flatten().tolist(), name='DOFs' + str(i), template='Rigid3d', rotation=rot)
             HeliBeami.createObject('MeshTopology', lines=lines, name='lines')
             HeliBeami.createObject('FixedConstraint', indices='0', name='FixedConstraint')
             HeliBeami.createObject('UniformMass', vertexMass='1 1 0.01 0 0 0 0.1 0 0 0 0.1', printLog='false',  showAxisSizeFactor=0)
             HeliBeami.createObject('BeamFEMForceField', radius=rHelli, name='FEM', poissonRatio=nu, youngModulus=E)
-            HeliBeami.createObject('SphereModel', radius=radiusSphereCollisionModelHeli, name='SphereCollision'+str(i))
+            HeliBeami.createObject('SphereCollisionModel', radius=radiusSphereCollisionModelHeli, name='SphereCollision'+str(i))
             index = str(nn-1)
             if BC == 'AxialForceAtTip':
                 HeliBeami.createObject('ConstantForceField', indices=indexNodeBC, showArrowSize='0.0005', printLog='1', forces=forceApplied)
             elif BC == 'MoveNodeAtTip':
                 HeliBeami.createObject('LinearMovementConstraint', keyTimes=keyTimes, template='Rigid3d', movements=movements, indices=indexNodeBC)
 
-            HeliBeami.createObject('Monitor', name="ReactionForce" + strbeam, indices=0,
-            template="Rigid3d", showPositions=0, PositionsColor="1 0 1 1", ExportPositions=False,
-            showVelocities=False, VelocitiesColor="0.5 0.5 1 1", ExportVelocities=False,
-            showForces=0, ForcesColor="0.8 0.2 0.2 1", ExportForces=True, showTrajectories=0,
-            TrajectoriesPrecision="0.1", TrajectoriesColor="0 1 1 1", sizeFactor="1",
-            fileName=DirectoryResults + strbeam + 'ReactionForce')
+            # HeliBeami.createObject('Monitor', name="ReactionForce" + strbeam, indices=0,
+            # template="Rigid3d", showPositions=0, PositionsColor="1 0 1 1", ExportPositions=False,
+            # showVelocities=False, VelocitiesColor="0.5 0.5 1 1", ExportVelocities=False,
+            # showForces=0, ForcesColor="0.8 0.2 0.2 1", ExportForces=True, showTrajectories=0,
+            # TrajectoriesPrecision="0.1", TrajectoriesColor="0 1 1 1", sizeFactor="1",
+            # fileName=DirectoryResults + strbeam + 'ReactionForce')
             
 
         Coord = np.zeros((nn, number_dofs_per_node),dtype=float)
@@ -213,18 +219,18 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         Collision = CentralBeam.createChild('Collision')
         self.Collision = Collision
 
-        CentralBeam.createObject('SphereModel', radius=radiusSphereCollisionModelCore, name='SphereCollision'+str(i+1))
+        CentralBeam.createObject('SphereCollisionModel', radius=radiusSphereCollisionModelCore, name='SphereCollision'+str(i+1))
         if BC == 'AxialForceAtTip':
             CentralBeam.createObject('ConstantForceField', indices=indexNodeBC, showArrowSize='0.0005', printLog='1', forces=forceApplied)
         elif BC == 'MoveNodeAtTip':
             CentralBeam.createObject('LinearMovementConstraint', keyTimes=keyTimes, template='Rigid3d', movements=movements, indices=indexNodeBC)
 
-        CentralBeam.createObject('Monitor', name="ReactionForceCentralBeam", indices='0',
-        template="Rigid3d", showPositions=0, PositionsColor="1 0 1 1", ExportPositions=False,
-        showVelocities=False, VelocitiesColor="0.5 0.5 1 1", ExportVelocities=False,
-        showForces=0, ForcesColor="0.8 0.2 0.2 1", ExportForces=True, showTrajectories=0,
-        TrajectoriesPrecision="0.1", TrajectoriesColor="0 1 1 1", sizeFactor="1",
-        fileName=DirectoryResults + 'CentralBeamReactionForce')
+        # CentralBeam.createObject('Monitor', name="ReactionForceCentralBeam", indices='0',
+        # template="Rigid3d", showPositions=0, PositionsColor="1 0 1 1", ExportPositions=False,
+        # showVelocities=False, VelocitiesColor="0.5 0.5 1 1", ExportVelocities=False,
+        # showForces=0, ForcesColor="0.8 0.2 0.2 1", ExportForces=True, showTrajectories=0,
+        # TrajectoriesPrecision="0.1", TrajectoriesColor="0 1 1 1", sizeFactor="1",
+        # fileName=DirectoryResults + 'CentralBeamReactionForce')
 
         CentralBeam.createObject('Monitor', name="DisplacementEndNode", indices=indexNodeBC,
         template="Rigid3d", showPositions=0, PositionsColor="1 0 1 1", ExportPositions=1 ,
@@ -232,7 +238,6 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         showForces=0, ForcesColor="0.8 0.2 0.2 1", ExportForces=0, showTrajectories=0,
         TrajectoriesPrecision="0.1", TrajectoriesColor="0 1 1 1", sizeFactor="1",
         fileName=DirectoryResults + 'CentralBeamDisplacementEnd')
-
 
 
         HeliBeami.createObject(
@@ -243,6 +248,7 @@ class BeamFEMForceField (Sofa.PythonScriptController):
             filename=DirectoryResults + "_frame_",
             exportEveryNumberOfSteps=1,
             listening=True)
+        self.reacForce = [] 
 
         return 0;
 
@@ -290,23 +296,32 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         ## Please feel free to add an example for a simple usage in /Users/marco.magliulo/mySofaCodes/myScriptsToGetStarted//Users/marco.magliulo/Software/sofa/src/applications/plugins/SofaPython/scn2python.py
         t = self.rootNode.time
         print "t=" + str(t) +  "\n"
+
+        beamC = self.rootNode.getChild('CentralBeam').getObject('FEM')
+        fintC = np.array(beamC.getDataFields()['fintAllBeams'])[0]
+        beamH = self.rootNode.getChild('HellicalBeam1').getObject('FEM')
+        fintH = np.array(beamH.getDataFields()['fintAllBeams'])[0]
+        self.reacForce.append(np.array(fintC + 6 * fintH))
+
         if t > self.endLoadingTime:
             print "End of the loading reached. Post process starts"
             self.rootNode.animate = False
-            print("Force in an hellical beam")
-            print(self.rootNode.HellicalBeam1.DOFs1.force[0])
-            print("Force in central beam")
-            print(self.rootNode.CentralBeam.DOFs.force[0])
-            print("Reaction force at one end of the strand")
-            RF0 = 6 * np.array(self.rootNode.HellicalBeam1.DOFs1.force[0]) + np.array(self.rootNode.CentralBeam.DOFs.force[0])
-            print(RF0)
-            print("Reaction force at the other end of the strand")
-            RF00 = 6 * np.array(self.rootNode.HellicalBeam1.DOFs1.force[-1]) + np.array(self.rootNode.CentralBeam.DOFs.force[-1])
-            print(RF00)
-            import pdb; pdb.set_trace()
+            # print("Force in an hellical beam")
+            # print(self.rootNode.HellicalBeam1.DOFs1.force[0])
+            # print("Force in central beam")
+            # print(self.rootNode.CentralBeam.DOFs.force[0])
+            # print("Reaction force at one end of the strand")
+            # RF0 = 6 * np.array(self.rootNode.HellicalBeam1.DOFs1.force[0]) + np.array(self.rootNode.CentralBeam.DOFs.force[0])
+            # print(RF0)
+            # print("Reaction force at the other end of the strand")
+            # RF00 = 6 * np.array(self.rootNode.HellicalBeam1.DOFs1.force[-1]) + np.array(self.rootNode.CentralBeam.DOFs.force[-1])
+            # print(RF00)
+            dispCentral = np.array(self.rootNode.CentralBeam.DOFs.position) - np.array(self.rootNode.CentralBeam.DOFs.rest_position)
+            dispHelicalBeam = np.array(self.rootNode.HellicalBeam1.DOFs1.position) - np.array(self.rootNode.HellicalBeam1.DOFs1.rest_position)
+            np.savetxt(self.DirectoryResults + "ReactionForces.txt", np.array(self.reacForce))
+
             quit()
 
-        # import pdb; pdb.set_trace()
         
         return 0;
 
@@ -346,7 +361,7 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         return 0;
 
 def createScene(rootNode):
-    rootNode.findData('dt').value = '0.01'
+    rootNode.findData('dt').value = '0.1'
     rootNode.findData('gravity').value = '0 0 -9.81'
     try : 
         sys.argv[0]

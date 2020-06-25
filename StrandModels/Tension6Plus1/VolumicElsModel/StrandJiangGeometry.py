@@ -191,7 +191,9 @@ class strand (Sofa.PythonScriptController):
         self.Strand = Strand
         Strand.gravity = [0, -9.81, 0]
 
-        Strand.createObject('StaticSolver')
+        Strand.createObject('StaticSolver', newton_iterations=100,
+            correction_tolerance_threshold='1.0e-9', residual_tolerance_threshold='1.0e-9',
+            should_diverge_when_residual_is_growing=1)
         # Strand.createObject(
         #     'EulerImplicitSolver',
         #     printLog='0',

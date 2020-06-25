@@ -122,7 +122,8 @@ class ClampedBeam (Sofa.PythonScriptController):
             self.Mech2 = u_node.createObject("MechanicalObject", template="E331", name="U") # the template "E331" apparently corresponds to 3x3 matrices
             u_node.createObject('CorotationalStrainMapping', template="F331,E331", method="svd", assemble = 1)
             self.mat = u_node.createObject("HookeForceField", template="E331", youngModulus=E, poissonRatio=nu,)
-        else:
+        else                method="small",
+
             # fonctionne pas 
             Beam.createObject(
                 'TetrahedronFEMForceField',

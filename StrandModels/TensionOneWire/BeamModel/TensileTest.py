@@ -53,7 +53,7 @@ def getCoordPointsAlongHellix(r, layangle, npt, tmax, c = 1):
         b = xp[i]/np.linalg.norm(xp[i])
         q[i] = getOrientationQuaternion(a, b) 
 
-        return x, q
+    return x, q
 
 class BeamFEMForceField (Sofa.PythonScriptController):
 
@@ -65,33 +65,29 @@ class BeamFEMForceField (Sofa.PythonScriptController):
 
     def createGraph(self,rootNode):
         self.rootNode = rootNode
-
-        UL = 1e-3
-        rBeam = 3.* UL
-        widthBB = 0.1 * UL
+        UL = 1E-3
+        lengthStrand = 1000 * UL  
+        r= 1 
         E=100e9
-        nu=0.33
-        rootNode.gravity = '0 0 0'
-        lengthBeam = 100*UL
-        forceApplied = -1
-        self.dictInfo = {"L":lengthBeam, "F": forceApplied, "E":E, "r":rBeam }
-
-        # number of nodes
-        nn = 100 
+        nu = 0.3
+        nn = 25
         assert nn > 1
         nbeam = nn - 1
         # take gravity into account
         gravity = 0
-        BC = ['AxialForceAtTip', 'MoveNodeAtTip'][0]
-        indexNodeBC = str(nn-1)
-        DirectoryResults='./Cantilever/'
+        showCollisionModels = 0
+
+        BC = 'AxialForceAtTip'
+        indexNodeBC = nn-1
+        DirectoryResults='./Tensile/'
         self.DirectoryResults = DirectoryResults
         if not os.path.exists(DirectoryResults):
             os.mkdir(DirectoryResults)
+
         dir_name = DirectoryResults 
         test = os.listdir(dir_name)
         for item in test:
-            if item.endswith(".txt"):
+            if item.endswith(".txt") or item.endswith(".vtu"):
                 os.remove(os.path.join(dir_name, item))
 
         self.rootNode = rootNode
@@ -99,88 +95,69 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         rootNode.createObject('RequiredPlugin', name='SofaOpenglVisual')
         rootNode.createObject('RequiredPlugin', name='SofaPython')
         rootNode.createObject('RequiredPlugin', name='SofaExporter')
-        rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields')
+        rootNode.createObject('RequiredPlugin', name='SofaValidation')
+
+        if showCollisionModels:
+            rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields showCollisionModels')
+        else:
+            rootNode.createObject('VisualStyle', displayFlags='showBehaviorModels showForceFields')
 
         if gravity:
             rootNode.gravity = [0,0,-9.81]
         else:
             rootNode.gravity = [0,0,0]
 
-        rootNode.dt = 0.1
-        static = 1
-
-        if not static:
-            rootNode.createObject('EulerImplicitSolver', printLog='0', rayleighStiffness='0.1', name='cg_odesolver', rayleighMass='0.1')
-            self.solverType = "EulerImplicit"
-        else:
-            rootNode.createObject('StaticSolver', newton_iterations=100, correction_tolerance_threshold=1E-12,
-            residual_tolerance_threshold=1e-12)
-
-            self.solverType = "Static"
-        rootNode.createObject('CholeskySolver')# , threshold='1e-09', tolerance='1e-09', name='linear solver', iterations='25', template='GraphScattered')
-
+        # rootNode.createObject('EulerImplicitSolver', rayleighStiffness='0', printLog='false', rayleighMass='0.1')
+        rootNode.createObject('StaticSolver', newton_iterations=100,
+            correction_tolerance_threshold='1.0e-9', residual_tolerance_threshold='1.0e-9',
+            should_diverge_when_residual_is_growing=1)
+        rootNode.createObject('CGLinearSolver', threshold='1.0e-9', tolerance='1.0e-9', name='linear solver', iterations='1000')
         # topology
         lines = np.zeros((nbeam, 2), dtype=int) 
         lines[:,0] = np.arange(0, nn -1)
         lines[:,1] = np.arange(1, nn)
         lines = lines.flatten().tolist()
 
-        # rootNode/Beam --> straight beam
+        # rootNode/CentralBeam --> straight beam
         # x, q = getCoordPointsAlongHellix(0, np.deg2rad(0), nn, tmax = 2 * np.pi, c = p)
         number_dofs_per_node = 7
-        self.endLoadingTime = 1
 
         if BC == 'AxialForceAtTip':
             #index of the last node
-            VforceApplied = [0, forceApplied, 0, 0, 0, 0]
+            forceApplied = [0, 0, 10000, 0, 0, 0]
         elif BC == 'MoveNodeAtTip':
-            index = str(nn-1)
-            # easy to retrieve the displacement
-            disp = epsilon * lengthBeam
-            keyTimes = np.zeros(3)
-            keyTimes[0] = 0 
-            keyTimes[1] = self.endLoadingTime 
-            keyTimes[2] = 2*self.endLoadingTime 
-            movements = np.zeros((keyTimes.shape[0], 6), dtype=float)
-            movements[1] = [0, 0, disp, 0, 0, 0]
-            movements[2] = [0, 0, disp, 0, 0, 0]
-            keyTimes = keyTimes.ravel().tolist()
-            movements = movements.ravel().tolist()
+            raise NotImplementedError
 
         Coord = np.zeros((nn, number_dofs_per_node),dtype=float)
-        Coord[:, 2] = np.linspace(0, lengthBeam,nn) 
+        Coord[:, 2] = np.linspace(0, lengthStrand ,nn) 
         a = np.array([1,0,0])
         q = getOrientationQuaternion(a, np.array([0,0,1]))
         Coord[:, 3:] = q
+        d = {"lengthStrand": lengthStrand}
+        save_obj(d, DirectoryResults + 'infoSimu' )
         # strCoord =  str(Coord.flatten()).replace('\n', '').replace('[', '').replace(']','')
-        Beam = rootNode.createChild('Beam')
-        self.Beam = Beam
-        Beam.createObject('MeshTopology', lines=lines, name='lines')
-        Beam.createObject('MechanicalObject', position= Coord.flatten().tolist(), name='DOFs', template='Rigid3d', showObject=0)
-        Beam.createObject('FixedConstraint', indices=[0], name='FixedConstraint')
-        Beam.createObject('UniformMass', vertexMass='1 1 0.01 0 0 0 0.1 0 0 0 0.1', printLog='false', showAxisSizeFactor=0)
-        Beam.createObject('BeamFEMForceField', radius=rBeam, name='FEM', poissonRatio=nu, youngModulus=E)
-        Collision = Beam.createChild('Collision')
+        CentralBeam = rootNode.createChild('CentralBeam')
+        self.CentralBeam = CentralBeam
+        CentralBeam.createObject('MeshTopology', lines=lines, name='lines')
+        CentralBeam.createObject('MechanicalObject', position= Coord.flatten().tolist(), name='DOFs', template='Rigid3d', showObject=0)
+        CentralBeam.createObject('FixedConstraint', indices='0', name='FixedConstraint')
+        CentralBeam.createObject('UniformMass', vertexMass='1 1 0.01 0 0 0 0.1 0 0 0 0.1', printLog='false', showAxisSizeFactor=0)
+        CentralBeam.createObject('BeamFEMForceField', radius=r, name='FEM', poissonRatio=nu, youngModulus=E)
+        Collision = CentralBeam.createChild('Collision')
         self.Collision = Collision
 
-        if BC == 'AxialForceAtTip':
-            Beam.createObject('ConstantForceField', indices=indexNodeBC, showArrowSize=0.01 , printLog='0', totalForce=VforceApplied, topology="@lines")
-        elif BC == 'MoveNodeAtTip':
-            Beam.createObject('LinearMovementConstraint', keyTimes=keyTimes, template='Rigid3d', movements=movements, indices=indexNodeBC)
+        CentralBeam.createObject('ConstantForceField', indices=indexNodeBC, showArrowSize='0.0005', printLog='1', forces=forceApplied)
 
-        # Beam.createObject('Monitor', name="ReactionForceBeam", indices='0',
-        # template="Rigid3d", showPositions=0, PositionsColor="1 0 1 1", ExportPositions=False,
-        # showVelocities=False, VelocitiesColor="0.5 0.5 1 1", ExportVelocities=False,
-        # showForces=0, ForcesColor="0.8 0.2 0.2 1", ExportForces=True, showTrajectories=0,
-        # TrajectoriesPrecision="0.1", TrajectoriesColor="0 1 1 1", sizeFactor="1",
-        # fileName=DirectoryResults + 'BeamReactionForce')
+        CentralBeam.createObject('Monitor', name="DisplacementEndNode", indices=indexNodeBC,
+        template="Rigid3d", showPositions=0, PositionsColor="1 0 1 1", ExportPositions=1 ,
+        showVelocities=False, VelocitiesColor="0.5 0.5 1 1", ExportVelocities=False,
+        showForces=0, ForcesColor="0.8 0.2 0.2 1", ExportForces=0, showTrajectories=0,
+        TrajectoriesPrecision="0.1", TrajectoriesColor="0 1 1 1", sizeFactor="1",
+        fileName=DirectoryResults + 'CentralBeamDisplacementEnd')
 
-        # Beam.createObject('Monitor', name="DisplacementEndNode", indices=indexNodeBC,
-        # template="Rigid3d", showPositions=0, PositionsColor="1 0 1 1", ExportPositions=1 ,
-        # showVelocities=False, VelocitiesColor="0.5 0.5 1 1", ExportVelocities=False,
-        # showForces=0, ForcesColor="0.8 0.2 0.2 1", ExportForces=0, showTrajectories=0,
-        # TrajectoriesPrecision="0.1", TrajectoriesColor="0 1 1 1", sizeFactor="1",
-        # fileName=DirectoryResults + 'BeamDisplacementEnd')
+        self.endLoadingTime = 1
+
+        self.reacForce = [] 
 
         return 0;
 
@@ -228,39 +205,18 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         ## Please feel free to add an example for a simple usage in /Users/marco.magliulo/mySofaCodes/myScriptsToGetStarted//Users/marco.magliulo/Software/sofa/src/applications/plugins/SofaPython/scn2python.py
         t = self.rootNode.time
         print "t=" + str(t) +  "\n"
-        # Deflec = np.array(self.rootNode.Beam.DOFs.position[-1]) - np.array(self.rootNode.Beam.DOFs.rest_position[-1])[1]
-        AllDeflec = (np.array(self.rootNode.Beam.DOFs.position) - np.array(self.rootNode.Beam.DOFs.rest_position))[:,1]
-        x = np.array(self.rootNode.Beam.DOFs.rest_position)[:,2]
 
-        # only one time step
-        print("Results:") 
-        E = self.dictInfo["E"]
-        F = self.dictInfo["F"]
-        L = self.dictInfo["L"]
-        r = self.dictInfo["r"]
-        I = (np.pi * r**4) / 4 
-        DeflecAnalytical = ((F * x**2)*(3 * L - x)) / (6 *E * I)
-        ReacForce = np.array(self.rootNode.Beam.DOFs.force[-1])
+        beamC = self.rootNode.getChild('CentralBeam').getObject('FEM')
+        fintC = np.array(beamC.getDataFields()['fintAllBeams'])[0]
+        self.reacForce.append(np.array(fintC))
 
-        import matplotlib.pylab as plt
-        plt.plot(x , AllDeflec, label="deflection along beam")
-        plt.plot(x, DeflecAnalytical, '--', label="analytical deflection" )
-        plt.legend()
-        ax=plt.gca()
-        ax.set_xlabel("step number")
-        ax.set_ylabel("deflection at the tip")
-        plt.pause(0.1)
-        plt.savefig("CantileverBeam"+self.solverType+"BeamElements")
-        # !!! c'est la somme des forces aux noeuds --> C'est normal que ce soit pas 0
-        Residual = np.array(self.rootNode.Beam.DOFs.force)
-        # il faut creer une nouvelle data (par ex internal force) et l'exporter --> ca doit etre de type VecDeriv
-        beams = self.rootNode.getChild('Beam').getObject('FEM')
-        fint = np.array(beams.getDataFields()['fintAllBeams'])
-        RF = fint[0]
+        if t > self.endLoadingTime:
+            print "End of the loading reached. Post process starts"
+            self.rootNode.animate = False
+            np.savetxt(self.DirectoryResults + "ReactionForces.txt", np.array(self.reacForce))
 
-        import pdb; pdb.set_trace()
+            quit()
 
-        # import pdb; pdb.set_trace()
         
         return 0;
 
@@ -294,14 +250,13 @@ class BeamFEMForceField (Sofa.PythonScriptController):
 
     def onBeginAnimationStep(self, deltaTime):
         ## Please feel free to add an example for a simple usage in /Users/marco.magliulo/mySofaCodes/myScriptsToGetStarted//Users/marco.magliulo/Software/sofa/src/applications/plugins/SofaPython/scn2python.py
-        nodeBlocked = self.rootNode.getChild('Beam').getObject('FixedConstraint').findData('indices').value
-        print 'node blocked is ' + str(nodeBlocked)
-        if self.rootNode.time == 0:
-            self.deflec = []
+        # nodeBlocked = self.rootNode.getChild('CentralBeam').getObject('FixedConstraint').findData('indices').value
+        # print 'node blocked is ' + str(nodeBlocked)
+        # import pdb; pdb.set_trace()
         return 0;
 
 def createScene(rootNode):
-    rootNode.findData('dt').value = '0.01'
+    rootNode.findData('dt').value = '0.1'
     rootNode.findData('gravity').value = '0 0 -9.81'
     try : 
         sys.argv[0]
