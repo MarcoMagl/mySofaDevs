@@ -219,7 +219,9 @@ class strand (Sofa.PythonScriptController):
                 'TetrahedronFEMForceField',
                 template='Vec3d',
                 youngModulus=E,
-                poissonRatio=nu)
+                poissonRatio=nu,
+                computeVonMisesStress=1
+                )
             Strand.createObject("TetrahedronSetGeometryAlgorithms", template="Vec3d")
         else:
             Strand.createObject(

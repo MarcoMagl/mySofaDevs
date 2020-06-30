@@ -240,14 +240,14 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         fileName=DirectoryResults + 'CentralBeamDisplacementEnd')
 
 
-        HeliBeami.createObject(
-            'VTKExporter',
-            position="@DOFs"+str(i)+".position",
-            edges="1",
-            tetras="0",
-            filename=DirectoryResults + "_frame_",
-            exportEveryNumberOfSteps=1,
-            listening=True)
+        # HeliBeami.createObject(
+        #     'VTKExporter',
+        #     position="@DOFs"+str(i)+".position",
+        #     edges="1",
+        #     tetras="0",
+        #     filename=DirectoryResults + "_frame_",
+        #     exportEveryNumberOfSteps=1,
+        #     listening=True)
         self.reacForce = [] 
 
         return 0;
@@ -361,7 +361,7 @@ class BeamFEMForceField (Sofa.PythonScriptController):
         return 0;
 
 def createScene(rootNode):
-    rootNode.findData('dt').value = '0.1'
+    rootNode.findData('dt').value = 0.01
     rootNode.findData('gravity').value = '0 0 -9.81'
     try : 
         sys.argv[0]
